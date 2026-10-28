@@ -19,9 +19,8 @@ client = OpenAI(
 )
 
 # ==========================================
-# 2. 你的定制化信息源矩阵 (已全面替换镜像)
+# 2. 你的定制化信息源矩阵 (宏观政策已替换为 Google News 方案)
 # ==========================================
-# 获取外部传入的主题，默认跑“宏观政策”
 TARGET_TOPIC = sys.argv[1] if len(sys.argv) > 1 else "宏观政策"
 
 FEEDS_CONFIG = {
@@ -29,8 +28,10 @@ FEEDS_CONFIG = {
         "title": "🏛️ 宏观政策观察窗口",
         "prompt_role": "你是一位资深的宏观政策研究员。请重点关注政策释放的资金信号、产业导向和改革方向。",
         "urls": [
-            "https://rsshub.rssforever.com/casssp/news/93",
-            "https://rsshub.rssforever.com/gov/zhengce/zuixin"
+            # 使用 Google News 搜索：限定 gov.cn 的“政策”栏目，过去7天
+            "https://news.google.com/rss/search?q=site:gov.cn/zhengce+when:7d&hl=zh-CN&gl=CN&ceid=CN:zh-Hans",
+            # 限定社科院网站，过去7天
+            "https://news.google.com/rss/search?q=site:casssp.cssn.cn+when:7d&hl=zh-CN&gl=CN&ceid=CN:zh-Hans"
         ]
     },
     "观点与实践": {
@@ -56,8 +57,8 @@ FEEDS_CONFIG = {
         "title": "🔥 社会情绪与舆情观察",
         "prompt_role": "你是一位敏锐的社会观察员。请过滤掉纯娱乐八卦，重点分析老百姓在关心什么、焦虑什么、期待什么，反映了怎样的社会心理。",
         "urls": [
-            "https://zhihu-hot.ayanamist.com/feed.xml",       # 知乎热榜专用独立源
-            "https://rsshub.rssforever.com/weibo/search/hot"  # 微博热搜（镜像）
+            "https://zhihu-hot.ayanamist.com/feed.xml",
+            "https://rsshub.rssforever.com/weibo/search/hot"
         ]
     },
     "娱乐解压": {
