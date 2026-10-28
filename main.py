@@ -1,4 +1,5 @@
 import os
+import sys
 import requests
 import feedparser
 from openai import OpenAI
@@ -7,7 +8,7 @@ import time
 from email.utils import parsedate_to_datetime
 
 # ==========================================
-# 1. 核心环境配置 (API 密钥)
+# 1. 核心配置
 # ==========================================
 DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY")
 PUSHPLUS_TOKEN = os.environ.get("PUSHPLUS_TOKEN")
@@ -18,26 +19,69 @@ client = OpenAI(
 )
 
 # ==========================================
-# 2. 终极信息源矩阵 (RSS 订阅源)
+# 2. 你的定制化信息源矩阵
 # ==========================================
-DOMESTIC_FEEDS = [
-    "http://124.223.40.126:8001/feed/all.rss" # 原版默认的国内源
-]
+# 获取外部传入的主题，默认跑“宏观政策”
+TARGET_TOPIC = sys.argv[1] if len(sys.argv) > 1 else "宏观政策"
 
-INTL_FEEDS = [
-    "https://www.theverge.com/rss/index.xml",
-    "https://hnrss.org/frontpage",
-    "https://www.economist.com/finance-and-economics/rss.xml"
-]
+FEEDS_CONFIG = {
+    "宏观政策": {
+        "title": "🏛️ 宏观政策观察窗口",
+        "prompt_role": "你是一位资深的宏观政策研究员。请重点关注政策释放的资金信号、产业导向和改革方向。",
+        "urls": [
+            "https://rsshub.app/casssp/news/93",
+            "https://rsshub.app/gov/zhengce/zuixin"
+        ]
+    },
+    "观点与实践": {
+        "title": "🧠 智库观点与实践观察",
+        "prompt_role": "你是一位智库分析师。请重点提炼文章的理论深度、底层逻辑，以及对地方经济实践的启发。",
+        "urls": [
+            "https://rsshub.app/chinathinktanks/6",
+            "https://rsshub.app/chinathinktanks/3",
+            "https://rsshub.app/chinathinktanks/10",
+            "https://rsshub.app/chinathinktanks/131"
+        ]
+    },
+    "财经洞察": {
+        "title": "📈 财经与投资洞察",
+        "prompt_role": "你是一位首席经济学家。请重点关注金融市场波动、行业研究报告的核心结论和宏观经济指标。",
+        "urls": [
+            "https://rsshub.app/nifd/research/3333d2af-91d6-429b-be83-28b92f31b6d7",
+            "https://rsshub.app/mckinsey/cn",
+            "https://rsshub.app/dtcj/datainsight"
+        ]
+    },
+    "社会情绪": {
+        "title": "🔥 社会情绪与舆情观察",
+        "prompt_role": "你是一位敏锐的社会观察员。请过滤掉纯娱乐八卦，重点分析老百姓在关心什么、焦虑什么、期待什么，反映了怎样的社会心理。",
+        "urls": [
+            "https://rsshub.app/zhihu/daily",
+            "https://rsshub.app/zhihu/pin/hotlist"
+        ]
+    },
+    "娱乐解压": {
+        "title": "🎬 娱乐与文化解压",
+        "prompt_role": "你是一位资深文娱主编。请用轻松幽默的语气，推荐值得一看的影视剧、UP主视频或娱乐热点。",
+        "urls": [
+            "https://rsshub.app/bilibili/weekly",
+            "https://rsshub.app/douban/celebrity/1274261"
+        ]
+    }
+}
 
-REPORT_TITLE = "🌍 专属【AI 洞察周报】"
-REPORT_SUBTITLE = "由 DeepSeek 强力驱动，为您过滤信息噪音，提炼高维认知。"
+# 获取当前主题的配置
+current_config = FEEDS_CONFIG.get(TARGET_TOPIC, FEEDS_CONFIG["宏观政策"])
+CURRENT_FEEDS = current_config["urls"]
+REPORT_TITLE = current_config["title"]
+AI_ROLE = current_config["prompt_role"]
+
 
 # ==========================================
-# 3. 抓取近期更新的 RSS 文章
+# 3. 抓取与解析
 # ==========================================
 def fetch_recent_rss(feed_urls, days_limit=7):
-    print(f"📡 正在扫描订阅源，严格筛选过去 {days_limit} 天内的文章...")
+    print(f"📡 正在扫描【{TARGET_TOPIC}】源，筛选过去 {days_limit} 天内的文章...")
     recent_items = []
     limit_date = datetime.now() - timedelta(days=days_limit)
     
@@ -72,9 +116,6 @@ def fetch_recent_rss(feed_urls, days_limit=7):
     print(f"✅ 扫描完毕，共发现 {len(recent_items)} 篇新鲜文章。")
     return recent_items
 
-# ==========================================
-# 4. Jina 穿透抓取正文
-# ==========================================
 def extract_full_text(url):
     jina_url = f"https://r.jina.ai/{url}"
     try:
@@ -88,52 +129,53 @@ def extract_full_text(url):
     return "抓取正文受限，请基于标题和摘要进行研判。"
 
 # ==========================================
-# 5. DeepSeek 深度剖析
+# 4. AI 动态分析
 # ==========================================
 def analyze_with_deepseek(title, content, source_name):
     prompt = f"""
-    你是一位资深的行业分析师与知识提炼专家，擅长从繁杂的资讯中过滤噪音，提取核心价值。
+    {AI_ROLE}
     请审读这篇来自【{source_name}】的最新资讯：
     【标题】：{title}
     【正文/摘要】：{content}
     
     【判定准则】
-    1. 如果该内容完全是无营养的广告、纯软文、毫无逻辑的碎片信息，请仅回复“无效资讯”。
-    2. 如果内容具备一定的信息增量或阅读价值，请发挥你的专长，按以下结构输出结构化简报。
+    1. 如果该内容完全是无营养的广告、纯软文、毫无逻辑的碎片信息（对于社会情绪频道，纯明星八卦视为无效），请仅回复“无效资讯”。
+    2. 如果内容具备信息增量或阅读价值，请发挥你的专长，按以下结构输出结构化简报：
 
     【深度洞察产出】
-    📰 **1. 核心提要**：用 1-2 句话极简概括这篇资讯的核心事实（谁做了什么，发布了什么，或探讨了什么）。
-    🧠 **2. 深度洞察**：分析该事件或观点背后的底层逻辑、潜在影响或行业趋势（这件事为什么重要？说明了什么问题？）。
-    🎯 **3. 行动启发**：结合这篇资讯，给读者提供一个具体的思考角度或可以直接落地的行动建议。
+    📰 **1. 核心提要**：用 1-2 句话极简概括这篇资讯的核心事实。
+    🧠 **2. 深度洞察**：结合你当前扮演的角色（政策研究员/智库分析师/经济学家/社会观察员），深入分析背后的逻辑或趋势。
+    🎯 **3. 行动启发**：给读者提供一个具体的思考角度或落地的行动建议。
     """
     try:
         response = client.chat.completions.create(
             model="deepseek-chat",
             messages=[
-                {"role": "system", "content": "你是一个能提供高信噪比信息摘要的顶级 AI 知识助理。"},
+                {"role": "system", "content": "你是一个高信噪比的情报提炼专家。"},
                 {"role": "user", "content": prompt}
             ],
-            temperature=0.4
+            temperature=0.3
         )
         return response.choices[0].message.content.strip()
-    except Exception:
+    except Exception as e:
+        print(f"AI 分析出错: {e}")
         return "无效资讯"
 
 # ==========================================
-# 6. 流水线核心逻辑
+# 5. 流水线与推送
 # ==========================================
-def process_news_pipeline(news_list, section_title, limit=None):
-    report_text = f"## {section_title}\n\n"
+def process_news_pipeline(news_list, limit=5):
+    report_text = ""
     valid_count = 0
     
     for item in news_list:
-        if limit is not None and valid_count >= limit:
-            print(f"🛑 {section_title} 已达到 {limit} 篇上限，停止分析。")
+        if valid_count >= limit:
+            print(f"🛑 已达到 {limit} 篇上限，停止分析。")
             break
             
-        print(f"🧐 评估文章: {item['title'][:30]}... (发布于 {item['pub_date'].strftime('%m-%d')})")
+        print(f"🧐 评估: {item['title'][:30]}...")
         full_text = extract_full_text(item['url'])
-        time.sleep(1.5)
+        time.sleep(1.5) 
         
         analysis = analyze_with_deepseek(item['title'], full_text, item['source'])
         
@@ -144,37 +186,38 @@ def process_news_pipeline(news_list, section_title, limit=None):
             report_text += f"{analysis}\n\n---\n\n"
             
     if valid_count == 0:
-        report_text += "> 🛡️ *本周期内暂无符合价值研判标准的新鲜动态。*\n\n---\n\n"
+        report_text += "> 🛡️ *本周期内暂无符合价值研判标准的新鲜动态。*\n\n"
     return report_text
 
-# ==========================================
-# 7. 执行与微信推送
-# ==========================================
 if __name__ == "__main__":
     today_str = datetime.now().strftime("%Y-%m-%d")
     
-    raw_domestic = fetch_recent_rss(DOMESTIC_FEEDS)
-    raw_intl = fetch_recent_rss(INTL_FEEDS)
+    print(f"🚀 开始生成【{TARGET_TOPIC}】报告...")
+    raw_news = fetch_recent_rss(CURRENT_FEEDS)
     
     final_report = f"# {REPORT_TITLE}\n\n"
     final_report += f"> 📅 **生成日期**：{today_str}\n"
-    final_report += f"> 💡 **订阅说明**：{REPORT_SUBTITLE}\n\n---\n\n"
+    final_report += f"> 💡 **频道**：{TARGET_TOPIC}\n\n---\n\n"
     
-    final_report += process_news_pipeline(raw_domestic, "📌 第一部分：国内精选动态", limit=15)
-    final_report += process_news_pipeline(raw_intl, "🌐 第二部分：海外视野观察", limit=8)
+    # 每个频道最多输出 4 篇精华，防止超长
+    final_report += process_news_pipeline(raw_news, limit=4)
     
-    # 推送至微信 (原版使用的是 markdown 模板)
+    # 自动截断保护
+    if len(final_report) > 18000:
+        final_report = final_report[:18000] + "\n\n> ⚠️ *内容过长已截断*"
+
     try:
+        print("📡 正在推送到微信...")
         response = requests.post("https://www.pushplus.plus/send", json={
             "token": PUSHPLUS_TOKEN,
-            "title": f"【本周推送】{REPORT_TITLE} - {today_str}",
+            "title": f"【{TARGET_TOPIC}】{today_str} 情报简报",
             "content": final_report,
             "template": "markdown"
         }, timeout=15)
         
-        # 👇 只加了这一行！把服务器的回复打印出来，不让你被“假成功”骗。
         print(f"📡 PushPlus 真实回执: {response.text}")
-        
-        print("✅ 任务完成。")
+        if response.status_code == 200 and '"code":200' in response.text:
+            print("✅ 微信推送成功！")
+            
     except Exception as e:
-        print(f"❌ 推送失败，请检查网络或 Token 配置: {e}")
+        print(f"❌ 推送失败: {e}")
