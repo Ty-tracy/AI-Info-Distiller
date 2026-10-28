@@ -19,7 +19,7 @@ client = OpenAI(
 )
 
 # ==========================================
-# 2. 你的定制化信息源矩阵
+# 2. 你的定制化信息源矩阵 (已全面替换镜像)
 # ==========================================
 # 获取外部传入的主题，默认跑“宏观政策”
 TARGET_TOPIC = sys.argv[1] if len(sys.argv) > 1 else "宏观政策"
@@ -29,43 +29,43 @@ FEEDS_CONFIG = {
         "title": "🏛️ 宏观政策观察窗口",
         "prompt_role": "你是一位资深的宏观政策研究员。请重点关注政策释放的资金信号、产业导向和改革方向。",
         "urls": [
-            "https://rsshub.app/casssp/news/93",
-            "https://rsshub.app/gov/zhengce/zuixin"
+            "https://rsshub.rssforever.com/casssp/news/93",
+            "https://rsshub.rssforever.com/gov/zhengce/zuixin"
         ]
     },
     "观点与实践": {
         "title": "🧠 智库观点与实践观察",
         "prompt_role": "你是一位智库分析师。请重点提炼文章的理论深度、底层逻辑，以及对地方经济实践的启发。",
         "urls": [
-            "https://rsshub.app/chinathinktanks/6",
-            "https://rsshub.app/chinathinktanks/3",
-            "https://rsshub.app/chinathinktanks/10",
-            "https://rsshub.app/chinathinktanks/131"
+            "https://rsshub.rssforever.com/chinathinktanks/6",
+            "https://rsshub.rssforever.com/chinathinktanks/3",
+            "https://rsshub.rssforever.com/chinathinktanks/10",
+            "https://rsshub.rssforever.com/chinathinktanks/131"
         ]
     },
     "财经洞察": {
         "title": "📈 财经与投资洞察",
         "prompt_role": "你是一位首席经济学家。请重点关注金融市场波动、行业研究报告的核心结论和宏观经济指标。",
         "urls": [
-            "https://rsshub.app/nifd/research/3333d2af-91d6-429b-be83-28b92f31b6d7",
-            "https://rsshub.app/mckinsey/cn",
-            "https://rsshub.app/dtcj/datainsight"
+            "https://rsshub.rssforever.com/nifd/research/3333d2af-91d6-429b-be83-28b92f31b6d7",
+            "https://rsshub.rssforever.com/mckinsey/cn",
+            "https://rsshub.rssforever.com/dtcj/datainsight"
         ]
     },
     "社会情绪": {
         "title": "🔥 社会情绪与舆情观察",
         "prompt_role": "你是一位敏锐的社会观察员。请过滤掉纯娱乐八卦，重点分析老百姓在关心什么、焦虑什么、期待什么，反映了怎样的社会心理。",
         "urls": [
-            "https://rsshub.app/zhihu/daily",
-            "https://rsshub.app/zhihu/pin/hotlist"
+            "https://zhihu-hot.ayanamist.com/feed.xml",       # 知乎热榜专用独立源
+            "https://rsshub.rssforever.com/weibo/search/hot"  # 微博热搜（镜像）
         ]
     },
     "娱乐解压": {
         "title": "🎬 娱乐与文化解压",
         "prompt_role": "你是一位资深文娱主编。请用轻松幽默的语气，推荐值得一看的影视剧、UP主视频或娱乐热点。",
         "urls": [
-            "https://rsshub.app/bilibili/weekly",
-            "https://rsshub.app/douban/celebrity/1274261"
+            "https://rsshub.rssforever.com/bilibili/weekly",
+            "https://rsshub.rssforever.com/douban/celebrity/1274261"
         ]
     }
 }
@@ -92,20 +92,20 @@ def fetch_recent_rss(feed_urls, days_limit=7):
             
             for entry in feed.entries:
                 try:
+                    pub_date = None
                     if hasattr(entry, 'published_parsed') and entry.published_parsed:
                         pub_date = datetime(*entry.published_parsed[:6])
                     elif hasattr(entry, 'published'):
                         pub_date = parsedate_to_datetime(entry.published).replace(tzinfo=None)
-                    else:
-                        continue
                         
-                    if pub_date >= limit_date:
+                    # 放宽条件：如果没有时间，或者时间在7天内，都收进来
+                    if pub_date is None or pub_date >= limit_date:
                         recent_items.append({
                             "title": entry.title,
                             "url": entry.link,
                             "summary": entry.get("summary", ""),
                             "source": source_name,
-                            "pub_date": pub_date
+                            "pub_date": pub_date if pub_date else datetime.now()
                         })
                 except Exception:
                     pass
@@ -164,7 +164,7 @@ def analyze_with_deepseek(title, content, source_name):
 # ==========================================
 # 5. 流水线与推送
 # ==========================================
-def process_news_pipeline(news_list, limit=5):
+def process_news_pipeline(news_list, limit=4):
     report_text = ""
     valid_count = 0
     
@@ -199,10 +199,8 @@ if __name__ == "__main__":
     final_report += f"> 📅 **生成日期**：{today_str}\n"
     final_report += f"> 💡 **频道**：{TARGET_TOPIC}\n\n---\n\n"
     
-    # 每个频道最多输出 4 篇精华，防止超长
     final_report += process_news_pipeline(raw_news, limit=4)
     
-    # 自动截断保护
     if len(final_report) > 18000:
         final_report = final_report[:18000] + "\n\n> ⚠️ *内容过长已截断*"
 
