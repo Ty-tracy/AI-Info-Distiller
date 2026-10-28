@@ -1,17 +1,25 @@
-name: AI Weekly Info Distiller
+name: AI Customized Info Distiller
 
 on:
-  # 关键设置：北京时间每周一早上 7:00 运行
-  # GitHub 服务器使用 UTC 时间，北京时间 07:00 相当于 UTC 时间的星期日 23:00
+  workflow_dispatch:
+    inputs:
+      topic:
+        description: '请选择你要推送的频道'
+        required: true
+        default: '宏观政策'
+        type: choice
+        options:
+        - 宏观政策
+        - 观点与实践
+        - 财经洞察
+        - 社会情绪
+        - 娱乐解压
   schedule:
-    - cron: '0 23 * * 0'
-  # 这个配置允许你在 GitHub 页面上手动点击按钮运行测试
-  workflow_dispatch: 
+    - cron: '0 23 * * 0' # 默认每周一早上7点跑一次“宏观政策”
 
 jobs:
   build_and_run:
     runs-on: ubuntu-latest
-    
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
@@ -21,8 +29,7 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: Install Dependencies
-        # 📢 优化：精简了只真正需要的依赖，加快每次 Action 的启动速度
+      - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install requests feedparser openai
@@ -31,4 +38,5 @@ jobs:
         env:
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
           PUSHPLUS_TOKEN: ${{ secrets.PUSHPLUS_TOKEN }}
-        run: python main.py
+        # 这里把下拉菜单选的值传给 Python 脚本
+        run: python main.py ${{ github.event.inputs.topic || '宏观政策' }}
