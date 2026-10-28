@@ -5,7 +5,10 @@ import feedparser
 from openai import OpenAI
 from datetime import datetime, timedelta
 import time
+import re
+from urllib.parse import urljoin
 from email.utils import parsedate_to_datetime
+from bs4 import BeautifulSoup
 
 # ==========================================
 # 1. 核心配置
@@ -19,7 +22,7 @@ client = OpenAI(
 )
 
 # ==========================================
-# 2. 你的定制化信息源矩阵 (宏观政策已替换为 Google News 方案)
+# 2. 频道与信息源矩阵
 # ==========================================
 TARGET_TOPIC = sys.argv[1] if len(sys.argv) > 1 else "宏观政策"
 
@@ -28,10 +31,7 @@ FEEDS_CONFIG = {
         "title": "🏛️ 宏观政策观察窗口",
         "prompt_role": "你是一位资深的宏观政策研究员。请重点关注政策释放的资金信号、产业导向和改革方向。",
         "urls": [
-            # 使用 Google News 搜索：限定 gov.cn 的“政策”栏目，过去7天
-            "https://news.google.com/rss/search?q=site:gov.cn/zhengce+when:7d&hl=zh-CN&gl=CN&ceid=CN:zh-Hans",
-            # 限定社科院网站，过去7天
-            "https://news.google.com/rss/search?q=site:casssp.cssn.cn+when:7d&hl=zh-CN&gl=CN&ceid=CN:zh-Hans"
+            # 宏观政策走网页爬虫，RSS留空即可
         ]
     },
     "观点与实践": {
@@ -39,47 +39,95 @@ FEEDS_CONFIG = {
         "prompt_role": "你是一位智库分析师。请重点提炼文章的理论深度、底层逻辑，以及对地方经济实践的启发。",
         "urls": [
             "https://rsshub.rssforever.com/chinathinktanks/6",
-            "https://rsshub.rssforever.com/chinathinktanks/3",
-            "https://rsshub.rssforever.com/chinathinktanks/10",
-            "https://rsshub.rssforever.com/chinathinktanks/131"
+            "https://rsshub.rssforever.com/chinathinktanks/10"
         ]
     },
     "财经洞察": {
         "title": "📈 财经与投资洞察",
         "prompt_role": "你是一位首席经济学家。请重点关注金融市场波动、行业研究报告的核心结论和宏观经济指标。",
         "urls": [
-            "https://rsshub.rssforever.com/nifd/research/3333d2af-91d6-429b-be83-28b92f31b6d7",
-            "https://rsshub.rssforever.com/mckinsey/cn",
-            "https://rsshub.rssforever.com/dtcj/datainsight"
+            "https://gateway.caixin.com/api/data/global/feedlyRss.xml", # 财新网官方原生源
+            "https://rsshub.rssforever.com/mckinsey/cn"
         ]
     },
     "社会情绪": {
         "title": "🔥 社会情绪与舆情观察",
         "prompt_role": "你是一位敏锐的社会观察员。请过滤掉纯娱乐八卦，重点分析老百姓在关心什么、焦虑什么、期待什么，反映了怎样的社会心理。",
         "urls": [
-            "https://zhihu-hot.ayanamist.com/feed.xml",
-            "https://rsshub.rssforever.com/weibo/search/hot"
+            "https://zhihu-hot.ayanamist.com/feed.xml" # 知乎热榜独立稳定源
         ]
     },
     "娱乐解压": {
         "title": "🎬 娱乐与文化解压",
         "prompt_role": "你是一位资深文娱主编。请用轻松幽默的语气，推荐值得一看的影视剧、UP主视频或娱乐热点。",
         "urls": [
-            "https://rsshub.rssforever.com/bilibili/weekly",
-            "https://rsshub.rssforever.com/douban/celebrity/1274261"
+            "https://sspai.com/feed", # 少数派官方原生源
+            "https://rsshub.rssforever.com/douban/movie/playing"
         ]
     }
 }
 
-# 获取当前主题的配置
 current_config = FEEDS_CONFIG.get(TARGET_TOPIC, FEEDS_CONFIG["宏观政策"])
 CURRENT_FEEDS = current_config["urls"]
 REPORT_TITLE = current_config["title"]
 AI_ROLE = current_config["prompt_role"]
 
+# ==========================================
+# 3. 网页爬虫：专抓发改委最新政策
+# ==========================================
+def fetch_ndrc_policies(url="https://www.ndrc.gov.cn/xxgk/zcfb/ghxwj/", limit=5):
+    print("🕷️ 正在直接抓取国家发改委政策发布页面...")
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
+    articles = []
+    try:
+        response = requests.get(url, headers=headers, timeout=15)
+        response.raise_for_status()
+        response.encoding = 'utf-8' # 强制 utf-8 编码，防止乱码
+        
+        soup = BeautifulSoup(response.text, 'html.parser')
+        # 遍历所有的 li 标签，寻找包含 .html 链接的条目
+        for li in soup.find_all('li'):
+            a_tag = li.find('a', href=True)
+            if not a_tag or not a_tag['href'].endswith('.html'):
+                continue
+            
+            title = a_tag.get_text(strip=True)
+            if not title or len(title) < 5: # 过滤掉极短的无效文本
+                continue
+                
+            link = urljoin(url, a_tag['href'])
+            
+            # 尝试从文本中提取日期 (格式如 2023/10/15)
+            li_text = li.get_text(strip=True)
+            date_match = re.search(r'(\d{4}/\d{2}/\d{2})', li_text)
+            pub_date = datetime.now() # 默认当前时间
+            if date_match:
+                try:
+                    pub_date = datetime.strptime(date_match.group(1), "%Y/%m/%d")
+                except:
+                    pass
+
+            articles.append({
+                "title": title,
+                "url": link,
+                "summary": "",
+                "source": "国家发改委",
+                "pub_date": pub_date
+            })
+
+            if len(articles) >= limit:
+                break
+                
+        print(f"✅ 成功抓取发改委政策 {len(articles)} 条。")
+        return articles
+    except Exception as e:
+        print(f"❌ 抓取发改委页面失败: {e}")
+        return []
 
 # ==========================================
-# 3. 抓取与解析
+# 4. RSS 解析抓取 (用于其他频道)
 # ==========================================
 def fetch_recent_rss(feed_urls, days_limit=7):
     print(f"📡 正在扫描【{TARGET_TOPIC}】源，筛选过去 {days_limit} 天内的文章...")
@@ -99,7 +147,6 @@ def fetch_recent_rss(feed_urls, days_limit=7):
                     elif hasattr(entry, 'published'):
                         pub_date = parsedate_to_datetime(entry.published).replace(tzinfo=None)
                         
-                    # 放宽条件：如果没有时间，或者时间在7天内，都收进来
                     if pub_date is None or pub_date >= limit_date:
                         recent_items.append({
                             "title": entry.title,
@@ -117,6 +164,9 @@ def fetch_recent_rss(feed_urls, days_limit=7):
     print(f"✅ 扫描完毕，共发现 {len(recent_items)} 篇新鲜文章。")
     return recent_items
 
+# ==========================================
+# 5. 内容提取与 AI 分析
+# ==========================================
 def extract_full_text(url):
     jina_url = f"https://r.jina.ai/{url}"
     try:
@@ -129,9 +179,6 @@ def extract_full_text(url):
         pass
     return "抓取正文受限，请基于标题和摘要进行研判。"
 
-# ==========================================
-# 4. AI 动态分析
-# ==========================================
 def analyze_with_deepseek(title, content, source_name):
     prompt = f"""
     {AI_ROLE}
@@ -163,7 +210,7 @@ def analyze_with_deepseek(title, content, source_name):
         return "无效资讯"
 
 # ==========================================
-# 5. 流水线与推送
+# 6. 流水线与推送
 # ==========================================
 def process_news_pipeline(news_list, limit=4):
     report_text = ""
@@ -176,7 +223,7 @@ def process_news_pipeline(news_list, limit=4):
             
         print(f"🧐 评估: {item['title'][:30]}...")
         full_text = extract_full_text(item['url'])
-        time.sleep(1.5) 
+        time.sleep(1.5) # 稍微停顿，防止被封
         
         analysis = analyze_with_deepseek(item['title'], full_text, item['source'])
         
@@ -194,7 +241,12 @@ if __name__ == "__main__":
     today_str = datetime.now().strftime("%Y-%m-%d")
     
     print(f"🚀 开始生成【{TARGET_TOPIC}】报告...")
-    raw_news = fetch_recent_rss(CURRENT_FEEDS)
+    
+    # 核心逻辑：如果是宏观政策，走爬虫；否则走 RSS
+    if TARGET_TOPIC == "宏观政策":
+        raw_news = fetch_ndrc_policies(limit=5)
+    else:
+        raw_news = fetch_recent_rss(CURRENT_FEEDS)
     
     final_report = f"# {REPORT_TITLE}\n\n"
     final_report += f"> 📅 **生成日期**：{today_str}\n"
