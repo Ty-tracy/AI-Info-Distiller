@@ -30,9 +30,7 @@ FEEDS_CONFIG = {
     "宏观政策": {
         "title": "🏛️ 宏观政策观察窗口",
         "prompt_role": "你是一位资深的宏观政策研究员。请重点关注政策释放的资金信号、产业导向和改革方向。",
-        "urls": [
-            # 宏观政策走网页爬虫，RSS留空即可
-        ]
+        "urls": []  # 宏观政策走爬虫，RSS留空
     },
     "观点与实践": {
         "title": "🧠 智库观点与实践观察",
@@ -46,7 +44,7 @@ FEEDS_CONFIG = {
         "title": "📈 财经与投资洞察",
         "prompt_role": "你是一位首席经济学家。请重点关注金融市场波动、行业研究报告的核心结论和宏观经济指标。",
         "urls": [
-            "https://gateway.caixin.com/api/data/global/feedlyRss.xml", # 财新网官方原生源
+            "https://gateway.caixin.com/api/data/global/feedlyRss.xml",
             "https://rsshub.rssforever.com/mckinsey/cn"
         ]
     },
@@ -54,14 +52,14 @@ FEEDS_CONFIG = {
         "title": "🔥 社会情绪与舆情观察",
         "prompt_role": "你是一位敏锐的社会观察员。请过滤掉纯娱乐八卦，重点分析老百姓在关心什么、焦虑什么、期待什么，反映了怎样的社会心理。",
         "urls": [
-            "https://zhihu-hot.ayanamist.com/feed.xml" # 知乎热榜独立稳定源
+            "https://zhihu-hot.ayanamist.com/feed.xml"
         ]
     },
     "娱乐解压": {
         "title": "🎬 娱乐与文化解压",
         "prompt_role": "你是一位资深文娱主编。请用轻松幽默的语气，推荐值得一看的影视剧、UP主视频或娱乐热点。",
         "urls": [
-            "https://sspai.com/feed", # 少数派官方原生源
+            "https://sspai.com/feed",
             "https://rsshub.rssforever.com/douban/movie/playing"
         ]
     }
@@ -73,58 +71,92 @@ REPORT_TITLE = current_config["title"]
 AI_ROLE = current_config["prompt_role"]
 
 # ==========================================
-# 3. 网页爬虫：专抓发改委最新政策
+# 3. 网页爬虫：多栏目聚合抓取
 # ==========================================
-def fetch_ndrc_policies(url="https://www.ndrc.gov.cn/xxgk/zcfb/ghxwj/", limit=5):
-    print("🕷️ 正在直接抓取国家发改委政策发布页面...")
+def fetch_ndrc_policies(limit_per_category=3, total_limit=6):
+    """
+    同时抓取发改委的政策发布（通知、规范性文件、公告、规划文本）
+    以及独立的通知公告列表。
+    """
+    print("🕷️ 正在多栏目抓取国家发改委最新政策...")
+    
+    # 配置要抓取的子栏目 URL
+    target_urls = {
+        "通知": "https://www.ndrc.gov.cn/xxgk/zcfb/tz/",
+        "规范性文件": "https://www.ndrc.gov.cn/xxgk/zcfb/ghxwj/",
+        "公告": "https://www.ndrc.gov.cn/xxgk/zcfb/gg/",
+        "规划文本": "https://www.ndrc.gov.cn/xxgk/zcfb/ghwb/",
+        "通知公告": "https://www.ndrc.gov.cn/xwdt/tzgg/"
+    }
+    
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
-    articles = []
-    try:
-        response = requests.get(url, headers=headers, timeout=15)
-        response.raise_for_status()
-        response.encoding = 'utf-8' # 强制 utf-8 编码，防止乱码
-        
-        soup = BeautifulSoup(response.text, 'html.parser')
-        # 遍历所有的 li 标签，寻找包含 .html 链接的条目
-        for li in soup.find_all('li'):
-            a_tag = li.find('a', href=True)
-            if not a_tag or not a_tag['href'].endswith('.html'):
-                continue
+    
+    all_articles = []
+    
+    for category_name, url in target_urls.items():
+        try:
+            print(f"  -> 扫描栏目：{category_name} ({url})")
+            response = requests.get(url, headers=headers, timeout=15)
+            response.raise_for_status()
+            response.encoding = 'utf-8'
             
-            title = a_tag.get_text(strip=True)
-            if not title or len(title) < 5: # 过滤掉极短的无效文本
-                continue
-                
-            link = urljoin(url, a_tag['href'])
+            soup = BeautifulSoup(response.text, 'html.parser')
+            count = 0
             
-            # 尝试从文本中提取日期 (格式如 2023/10/15)
-            li_text = li.get_text(strip=True)
-            date_match = re.search(r'(\d{4}/\d{2}/\d{2})', li_text)
-            pub_date = datetime.now() # 默认当前时间
-            if date_match:
-                try:
-                    pub_date = datetime.strptime(date_match.group(1), "%Y/%m/%d")
-                except:
-                    pass
-
-            articles.append({
-                "title": title,
-                "url": link,
-                "summary": "",
-                "source": "国家发改委",
-                "pub_date": pub_date
-            })
-
-            if len(articles) >= limit:
-                break
+            # 遍历页面中的链接，寻找政策条目
+            for a_tag in soup.find_all('a', href=True):
+                href = a_tag['href']
+                if not href.endswith('.html'):
+                    continue
                 
-        print(f"✅ 成功抓取发改委政策 {len(articles)} 条。")
-        return articles
-    except Exception as e:
-        print(f"❌ 抓取发改委页面失败: {e}")
-        return []
+                title = a_tag.get_text(strip=True)
+                if not title or len(title) < 5:
+                    continue
+                    
+                link = urljoin(url, href)
+                
+                # 尝试从附近的文本中提取日期
+                li_text = a_tag.find_parent('li').get_text(strip=True) if a_tag.find_parent('li') else ""
+                date_match = re.search(r'(\d{4}/\d{2}/\d{2})', li_text)
+                pub_date = datetime.now()
+                if date_match:
+                    try:
+                        pub_date = datetime.strptime(date_match.group(1), "%Y/%m/%d")
+                    except:
+                        pass
+
+                all_articles.append({
+                    "title": title,
+                    "url": link,
+                    "summary": "",
+                    "source": f"发改委-{category_name}",
+                    "pub_date": pub_date
+                })
+                
+                count += 1
+                if count >= limit_per_category:
+                    break
+                    
+        except Exception as e:
+            print(f"  ❌ 抓取 {category_name} 失败: {e}")
+
+    # 按发布时间倒序排列（最新的在最前面）
+    all_articles.sort(key=lambda x: x['pub_date'], reverse=True)
+    
+    # 去重（同一篇文章可能在多个栏目出现）
+    seen_urls = set()
+    final_articles = []
+    for item in all_articles:
+        if item['url'] not in seen_urls:
+            seen_urls.add(item['url'])
+            final_articles.append(item)
+        if len(final_articles) >= total_limit:
+            break
+    
+    print(f"✅ 多栏目抓取完毕，共获得 {len(final_articles)} 条最新政策。")
+    return final_articles
 
 # ==========================================
 # 4. RSS 解析抓取 (用于其他频道)
@@ -174,7 +206,7 @@ def extract_full_text(url):
         if response.status_code == 200:
             text = response.text
             if len(text) > 200 and "Access Denied" not in text:
-                return text[:3800] 
+                return text[:3800]
     except Exception:
         pass
     return "抓取正文受限，请基于标题和摘要进行研判。"
@@ -223,7 +255,7 @@ def process_news_pipeline(news_list, limit=4):
             
         print(f"🧐 评估: {item['title'][:30]}...")
         full_text = extract_full_text(item['url'])
-        time.sleep(1.5) # 稍微停顿，防止被封
+        time.sleep(1.5)
         
         analysis = analyze_with_deepseek(item['title'], full_text, item['source'])
         
@@ -242,9 +274,8 @@ if __name__ == "__main__":
     
     print(f"🚀 开始生成【{TARGET_TOPIC}】报告...")
     
-    # 核心逻辑：如果是宏观政策，走爬虫；否则走 RSS
     if TARGET_TOPIC == "宏观政策":
-        raw_news = fetch_ndrc_policies(limit=5)
+        raw_news = fetch_ndrc_policies(limit_per_category=2, total_limit=6)
     else:
         raw_news = fetch_recent_rss(CURRENT_FEEDS)
     
@@ -256,6 +287,11 @@ if __name__ == "__main__":
     
     if len(final_report) > 18000:
         final_report = final_report[:18000] + "\n\n> ⚠️ *内容过长已截断*"
+
+    # 保存文件，供屏幕拉取
+    with open("latest_report.txt", "w", encoding="utf-8") as f:
+        f.write(final_report[:800])
+    print("✅ 已保存 latest_report.txt")
 
     try:
         print("📡 正在推送到微信...")
